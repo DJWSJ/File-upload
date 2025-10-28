@@ -10,8 +10,10 @@ env:
   JAVA_VERSION: '17'
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -27,49 +29,44 @@ jobs:
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
-      - name: Upload JAR artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: application-jar
-          path: target/*.jar
-          retention-days: 7
-
-  release:
-    needs: build
-    if: github.event_name == 'release'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: application-jar
-
-      - name: Get version from pom.xml
-        id: version
+      - name: Get project name and version
+        id: project-info
         run: |
+          # 获取项目名称（使用仓库名称）
+          PROJECT_NAME="${{ github.event.repository.name }}"
+          
+          # 从pom.xml获取版本号
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          
+          # 设置输出变量
+          echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Project version: $VERSION"
+          echo "Project: $PROJECT_NAME, Version: $VERSION"
+
+      - name: Rename JAR file
+        run: |
+          # 重命名JAR文件
+          OLD_JAR=$(ls target/*.jar | head -1)
+          NEW_JAR="target/${{ steps.project-info.outputs.project_name }}-${{ steps.project-info.outputs.version }}.jar"
+          mv "$OLD_JAR" "$NEW_JAR"
+          echo "Renamed JAR file: $OLD_JAR -> $NEW_JAR"
+          ls -la target/*.jar
 
       - name: Create GitHub Release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          release_name: Release v${{ steps.version.outputs.version }}
+          tag_name: v${{ steps.project-info.outputs.version }}
+          release_name: ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}
           body: |
-            Automatic release of Spring Boot application
+            Automated release of ${{ steps.project-info.outputs.project_name }}
             
-            - Version: ${{ steps.version.outputs.version }}
-            - Commit: ${{ github.sha }}
+            - **Version**: ${{ steps.project-info.outputs.version }}
+            - **Commit**: ${{ github.sha }}
+            - **Build Date**: ${{ fromJSON('["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]')[github.event.head_commit.timestamp[5:7]-1] }} ${{ github.event.head_commit.timestamp[8:10] }}, ${{ github.event.head_commit.timestamp[0:4] }}
           draft: false
           prerelease: false
           files: |
-            *.jar
+            target/${{ steps.project-info.outputs.project_name }}-*.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
