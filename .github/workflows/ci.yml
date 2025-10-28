@@ -43,6 +43,10 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Project: $PROJECT_NAME, Version: $VERSION"
 
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
       - name: Rename JAR file
         run: |
           # 重命名JAR文件
@@ -63,7 +67,7 @@ jobs:
             
             - **Version**: ${{ steps.project-info.outputs.version }}
             - **Commit**: ${{ github.sha }}
-            - **Build Date**: ${{ fromJSON('["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]')[github.event.head_commit.timestamp[5:7]-1] }} ${{ github.event.head_commit.timestamp[8:10] }}, ${{ github.event.head_commit.timestamp[0:4] }}
+            - **Build Date**: ${{ steps.date.outputs.date }}
           draft: false
           prerelease: false
           files: |
