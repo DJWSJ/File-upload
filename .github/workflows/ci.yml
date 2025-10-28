@@ -1,128 +1,16 @@
-name: Build and Release Spring Boot Application
+name: Build and Release JAR
 
 on:
-  # 自动触发条件
   push:
     branches: [ main, master ]
-    paths:
-      - 'src/**'
-      - 'pom.xml'
-      - '.github/workflows/**'
-      - 'Dockerfile'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'src/**'
-      - 'pom.xml'
-  # 发布触发
   release:
-    types: [ published, created ]
-  # 手动触发
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: '部署环境'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-          - development
-          - staging
-          - production
-      skip_tests:
-        description: '跳过测试'
-        required: false
-        type: boolean
-        default: false
-      build_profile:
-        description: 'Maven构建profile'
-        required: false
-        type: string
-        default: ''
-      create_release:
-        description: '创建GitHub Release'
-        required: false
-        type: boolean
-        default: false
-      release_type:
-        description: 'Release类型'
-        required: false
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-        default: patch
+    types: [ published ]
 
 env:
   JAVA_VERSION: '17'
-  MAVEN_OPTS: '--batch-mode --no-transfer-progress'
 
 jobs:
-  check-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      src-changed: ${{ steps.changes.outputs.src }}
-      config-changed: ${{ steps.changes.outputs.config }}
-      any-changed: ${{ steps.changes.outputs.any }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect changes
-        uses: dorny/paths-filter@v3
-        id: changes
-        with:
-          filters: |
-            src:
-              - 'src/**'
-              - 'pom.xml'
-            config:
-              - '.github/workflows/**'
-              - 'Dockerfile'
-              - '**.yml'
-              - '**.yaml'
-
-  test:
-    needs: check-changes
-    if: needs.check-changes.outputs.src-changed == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
-          cache: 'maven'
-
-      - name: Run tests
-        run: |
-          if [ "${{ github.event.inputs.skip_tests }}" = "true" ]; then
-            echo "跳过测试"
-          else
-            mvn clean test ${{ github.event.inputs.build_profile && format(' -P{0}', github.event.inputs.build_profile) || '' }}
-          fi
-
-      - name: Upload test reports
-        uses: actions/upload-artifact@v4
-        if: failure() && github.event.inputs.skip_tests != 'true'
-        with:
-          name: test-reports-${{ github.run_number }}
-          path: target/surefire-reports/
-          retention-days: 30
-
   build:
-    needs: [check-changes, test]
-    if: |
-      (needs.check-changes.outputs.src-changed == 'true' && needs.test.result == 'success') || 
-      (github.event_name == 'workflow_dispatch' && needs.test.result == 'success') ||
-      (github.event_name == 'release' && needs.test.result == 'success')
     runs-on: ubuntu-latest
 
     steps:
@@ -135,43 +23,20 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
           cache: 'maven'
-
-      - name: Get version from pom.xml
-        id: version
-        uses: martinbusko/gitversion-actions@v1
 
       - name: Build with Maven
-        run: |
-          PROFILE_OPT=""
-          if [ -n "${{ github.event.inputs.build_profile }}" ]; then
-            PROFILE_OPT="-P${{ github.event.inputs.build_profile }}"
-          fi
-          
-          mvn clean package -DskipTests $PROFILE_OPT
-
-      - name: Display build info
-        run: |
-          echo "构建环境: ${{ github.event.inputs.environment || 'default' }}"
-          echo "构建Profile: ${{ github.event.inputs.build_profile || 'default' }}"
-          echo "跳过测试: ${{ github.event.inputs.skip_tests || 'false' }}"
-          echo "应用版本: ${{ steps.version.outputs.version }}"
-          ls -la target/*.jar
+        run: mvn clean package -DskipTests
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spring-boot-app-${{ github.run_number }}
+          name: application-jar
           path: target/*.jar
-          retention-days: 30
+          retention-days: 7
 
-  # 自动发布到 GitHub Releases
   release:
     needs: build
-    if: |
-      github.event_name == 'release' || 
-      github.ref == 'refs/heads/main' || 
-      github.ref == 'refs/heads/master' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -179,203 +44,32 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: spring-boot-app-${{ github.run_number }}
+          name: application-jar
 
-      - name: Get version info
+      - name: Get version from pom.xml
         id: version
         run: |
-          # 从pom.xml获取版本或使用Git标签
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
-          else
-            # 从pom.xml解析版本
-            VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          fi
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Detected version: $VERSION"
+          echo "Project version: $VERSION"
 
       - name: Create GitHub Release
-        id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.version.outputs.version }}-${{ github.run_number }}
+          tag_name: v${{ steps.version.outputs.version }}
           release_name: Release v${{ steps.version.outputs.version }}
+          body: |
+            Automatic release of Spring Boot application
+            
+            - Version: ${{ steps.version.outputs.version }}
+            - Commit: ${{ github.sha }}
           draft: false
-          prerelease: ${{ github.event.inputs.environment != 'production' }}
-          generate_release_notes: true
+          prerelease: false
           files: |
             *.jar
-            target/*.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Release Assets
-        if: steps.create_release.outputs.result == 'success'
-        run: |
-          echo "Release created: ${{ steps.create_release.outputs.url }}"
-          echo "Uploaded assets:"
-          ls -la *.jar target/*.jar 2>/dev/null || echo "No jar files found"
-
-  # 发布到 Docker Hub 或 GitHub Container Registry
-  docker-release:
-    needs: build
-    if: |
-      github.event_name == 'release' || 
-      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Docker Hub Login (可选)
-        if: env.DOCKERHUB_USERNAME != ''
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Push to Docker Hub (可选)
-        if: env.DOCKERHUB_USERNAME != ''
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:latest
-          cache-from: type=gha
-
-  # 部署到服务器
-  deploy:
-    needs: [build, release]
-    if: |
-      github.event_name == 'release' || 
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment != 'development')
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'production' }}
-
-    steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: spring-boot-app-${{ github.run_number }}
-
-      - name: Setup deployment
-        run: |
-          echo "开始部署到 ${{ github.event.inputs.environment || 'production' }} 环境"
-          echo "部署文件:"
-          ls -la *.jar
-
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            # 停止当前运行的应用
-            sudo systemctl stop my-spring-app || true
-            
-            # 备份旧版本
-            cp /opt/app/my-spring-app.jar /opt/app/backup/my-spring-app-$(date +%Y%m%d%H%M%S).jar || true
-            
-            # 上传新版本 (这个步骤需要在之前的步骤中通过scp上传)
-            # 重新启动应用
-            sudo systemctl start my-spring-app
-            
-            # 检查应用状态
-            sudo systemctl status my-spring-app
-        env:
-          DEPLOY_ENV: ${{ github.event.inputs.environment || 'production' }}
-
-  # 发送通知
-  notify:
-    needs: [build, release, deploy]
-    if: always()
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Notify Slack
-        uses: 8398a7/action-slack@v3
-        if: failure()
-        with:
-          status: failure
-          channel: '#ci-cd'
-          text: '构建失败: ${{ github.workflow }} #${{ github.run_number }}'
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-      - name: Notify success
-        uses: 8398a7/action-slack@v3
-        if: success()
-        with:
-          status: success
-          channel: '#ci-cd'
-          text: '构建成功: ${{ github.workflow }} #${{ github.run_number }} - 版本: ${{ needs.build.outputs.version }}'
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-  # 配置文件变更处理
-  config-update:
-    needs: check-changes
-    if: needs.check-changes.outputs.config-changed == 'true' && needs.check-changes.outputs.src-changed == 'false'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Notify config changes
-        run: |
-          echo "检测到配置文件变更，无需重新构建应用"
-
-      - name: Create comment on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '🔧 检测到工作流配置文件变更，无需重新构建应用。'
-            })
