@@ -1,0 +1,205 @@
+name: Build Spring Boot Application
+
+on:
+  # 自动触发条件
+  push:
+    branches: [ main, master, develop ]
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - '.github/workflows/**'
+      - 'Dockerfile'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+  # 手动触发
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: '部署环境'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      skip_tests:
+        description: '跳过测试'
+        required: false
+        type: boolean
+        default: false
+      build_profile:
+        description: 'Maven构建profile'
+        required: false
+        type: string
+        default: ''
+
+env:
+  JAVA_VERSION: '17'
+  MAVEN_OPTS: '--batch-mode --no-transfer-progress'
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      src-changed: ${{ steps.changes.outputs.src }}
+      config-changed: ${{ steps.changes.outputs.config }}
+      any-changed: ${{ steps.changes.outputs.any }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取所有历史记录用于变更检测
+
+      - name: Detect changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            src:
+              - 'src/**'
+              - 'pom.xml'
+            config:
+              - '.github/workflows/**'
+              - 'Dockerfile'
+              - '**.yml'
+              - '**.yaml'
+
+  test:
+    needs: check-changes
+    if: needs.check-changes.outputs.src-changed == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run tests
+        run: |
+          if [ "${{ github.event.inputs.skip_tests }}" = "true" ]; then
+            echo "跳过测试"
+          else
+            mvn clean test ${{ github.event.inputs.build_profile && format(' -P{0}', github.event.inputs.build_profile) || '' }}
+          fi
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: failure() && github.event.inputs.skip_tests != 'true'
+        with:
+          name: test-reports-${{ github.run_number }}
+          path: target/surefire-reports/
+          retention-days: 30
+
+  build:
+    needs: [check-changes, test]
+    if: |
+      (needs.check-changes.outputs.src-changed == 'true' && needs.test.result == 'success') || 
+      (github.event_name == 'workflow_dispatch' && needs.test.result == 'success')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build with Maven
+        run: |
+          PROFILE_OPT=""
+          if [ -n "${{ github.event.inputs.build_profile }}" ]; then
+            PROFILE_OPT="-P${{ github.event.inputs.build_profile }}"
+          fi
+          
+          mvn clean package -DskipTests $PROFILE_OPT
+
+      - name: Display build info
+        run: |
+          echo "构建环境: ${{ github.event.inputs.environment || 'default' }}"
+          echo "构建Profile: ${{ github.event.inputs.build_profile || 'default' }}"
+          echo "跳过测试: ${{ github.event.inputs.skip_tests || 'false' }}"
+          ls -la target/*.jar
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spring-boot-app-${{ github.run_number }}
+          path: target/*.jar
+          retention-days: 30
+
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release' || github.event.inputs.environment == 'production'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: target/*.jar
+          asset_name: app-${{ github.sha }}.jar
+          asset_content_type: application/java-archive
+
+  # 当只有配置文件变更时的处理
+  config-update:
+    needs: check-changes
+    if: needs.check-changes.outputs.config-changed == 'true' && needs.check-changes.outputs.src-changed == 'false'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Notify config changes
+        run: |
+          echo "检测到配置文件变更，无需重新构建应用"
+          echo "变更的文件:"
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }}
+
+      - name: Create comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '🔧 检测到工作流配置文件变更，无需重新构建应用。'
+            })
+
+  # 手动部署任务
+  deploy:
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: spring-boot-app-${{ github.run_number }}
+
+      - name: Display deployment info
+        run: |
+          echo "开始部署到: ${{ github.event.inputs.environment }}"
+          echo "部署文件:"
+          ls -la *.jar
+
+      - name: Deploy to environment
+        run: |
+          # 这里添加你的部署脚本
+          echo "部署到 ${{ github.event.inputs.environment }} 环境"
+          # 示例: scp *.jar user@server:/path/to/deploy/
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
