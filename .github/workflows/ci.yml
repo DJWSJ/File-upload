@@ -57,10 +57,10 @@ jobs:
           ls -la target/*.jar
 
       - name: Create GitHub Release
-        if: github.event_name == 'release'
+        # 修改这里：移除条件限制，每次构建都发布
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.project-info.outputs.version }}
+          tag_name: v${{ steps.project-info.outputs.version }}-${{ github.run_number }}
           release_name: ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}
           body: |
             Automated release of ${{ steps.project-info.outputs.project_name }}
@@ -68,6 +68,7 @@ jobs:
             - **Version**: ${{ steps.project-info.outputs.version }}
             - **Commit**: ${{ github.sha }}
             - **Build Date**: ${{ steps.date.outputs.date }}
+            - **Run Number**: ${{ github.run_number }}
           draft: false
           prerelease: false
           files: |
