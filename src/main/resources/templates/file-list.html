@@ -10,8 +10,8 @@
         .upload-form { background: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
         .category-badge { font-size: 0.75em; }
         .category-stats { background: white; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .category-item { padding: 8px 12px; margin: 4px; border-radius: 20px; cursor: pointer; transition: all 0.3s; }
-        .category-item:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+        .category-item { padding: 8px 12px; margin: 4px; border-radius: 20px; cursor: pointer; transition: all 0.3s; text-decoration: none; display: inline-block; }
+        .category-item:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); text-decoration: none; }
         .category-item.active { font-weight: bold; border: 2px solid #333; }
         .file-icon { width: 24px; margin-right: 8px; }
         .action-buttons { white-space: nowrap; }
@@ -22,8 +22,6 @@
         .category-video { background-color: #FF9800 !important; color: white; }
         .category-audio { background-color: #9C27B0 !important; color: white; }
         .category-archive { background-color: #795548 !important; color: white; }
-        .category-code { background-color: #607D8B !important; color: white; }
-        .category-executable { background-color: #F44336 !important; color: white; }
         .category-other { background-color: #9E9E9E !important; color: white; }
         .category-all { background-color: #6c757d !important; color: white; }
     </style>
@@ -36,18 +34,19 @@
     <div class="category-stats">
         <h5><i class="fas fa-chart-pie"></i> 文件分类</h5>
         <div class="d-flex flex-wrap mt-3">
-            <!-- 使用链接替代 JavaScript 点击事件 -->
-            <a th:href="@{/}" class="category-item category-all"
+            <!-- 全部文件链接 -->
+            <a th:href="@{/api/file-manager}" class="category-item category-all"
                th:classappend="${currentCategory == null} ? 'active' : ''">
                 全部文件
                 <span class="badge bg-light text-dark"
                       th:text="${files != null ? #lists.size(files) : 0}"></span>
             </a>
-            <a th:each="category : ${T(com.djwsj.filemanager.enums.FileCategory).values()}"
-               th:href="@{/(category=${category.name()})}"
+            <!-- 分类筛选链接 -->
+            <a th:each="category : ${categories}"
+               th:href="@{/api/file-manager(category=${category.name})}"
                class="category-item"
-               th:class="'category-' + ${category.name().toLowerCase()} + (${currentCategory == category.name()} ? ' active' : '')">
-                <span th:text="${category.displayName}"></span>
+               th:class="'category-' + ${category.name.toLowerCase()} + (${currentCategory == category.name} ? ' active' : '')">
+                <span th:text="${category.displayName != null ? category.displayName : category.name}"></span>
                 <span class="badge bg-light text-dark"
                       th:text="${categoryStats.get(category) != null ? categoryStats.get(category) : 0}"></span>
             </a>
@@ -57,7 +56,7 @@
     <!-- 上传表单 -->
     <div class="upload-form">
         <h4><i class="fas fa-upload"></i> 上传文件</h4>
-        <form th:action="@{/upload}" method="post" enctype="multipart/form-data" id="uploadForm">
+        <form th:action="@{/api/upload}" method="post" enctype="multipart/form-data" id="uploadForm">
             <div class="mb-3">
                 <label for="fileInput" class="form-label">选择文件</label>
                 <input type="file" class="form-control" name="file" id="fileInput" required>
@@ -88,9 +87,9 @@
             <i class="fas fa-list"></i>
             <span th:if="${currentCategory != null}">
                     文件列表 -
-                    <span th:each="cat : ${T(com.djwsj.filemanager.enums.FileCategory).values()}"
-                          th:if="${cat.name() == currentCategory}"
-                          th:text="${cat.displayName}"></span>
+                    <span th:each="cat : ${categories}"
+                          th:if="${cat.name == currentCategory}"
+                          th:text="${cat.displayName != null ? cat.displayName : cat.name}"></span>
                 </span>
             <span th:if="${currentCategory == null}">文件列表</span>
         </h4>
@@ -115,22 +114,24 @@
             <tbody>
             <tr th:each="file : ${files}">
                 <td>
-                    <i th:class="'fas fa-file'"
-                       th:style="'color: ' + ${@fileIconService.getCategoryColor(file.category)}"></i>
+                    <i class="fas fa-file" th:classappend="'text-' + ${@fileIconService != null ? @fileIconService.getCategoryColor(file.category) : 'muted'}"></i>
                     <span th:text="${file.originalFilename}"></span>
                 </td>
                 <td>
-                            <span class="badge category-badge"
-                                  th:text="${file.category.displayName}"
-                                  th:class="'category-' + ${file.category.name().toLowerCase()}">
-                            </span>
+                    <span class="badge category-badge"
+                          th:text="${file.category.displayName != null ? file.category.displayName : file.category.name}"
+                          th:class="'category-' + ${file.category.name.toLowerCase()}">
+                    </span>
                 </td>
                 <td>
+                    <!-- 文件大小格式化 -->
                     <span th:if="${file.size < 1024}" th:text="${file.size} + ' B'"></span>
                     <span th:if="${file.size >= 1024 and file.size < 1048576}"
                           th:text="${#numbers.formatDecimal(file.size/1024, 1, 2)} + ' KB'"></span>
-                    <span th:if="${file.size >= 1048576}"
+                    <span th:if="${file.size >= 1048576 and file.size < 1073741824}"
                           th:text="${#numbers.formatDecimal(file.size/1048576, 1, 2)} + ' MB'"></span>
+                    <span th:if="${file.size >= 1073741824}"
+                          th:text="${#numbers.formatDecimal(file.size/1073741824, 1, 2)} + ' GB'"></span>
                 </td>
                 <td>
                     <span th:text="${file.extension != null ? file.extension : '未知'}"></span>
@@ -138,31 +139,52 @@
                 <td th:text="${#temporals.format(file.uploadTime, 'yyyy-MM-dd HH:mm')}"></td>
                 <td class="action-buttons">
                     <!-- 下载链接 -->
-                    <a th:href="@{/download/{fileName}(fileName=${file.filename})}"
+                    <a th:href="@{/api/download/{fileName}(fileName=${file.filename})}"
                        class="btn btn-success btn-sm"
                        target="_blank">
                         <i class="fas fa-download"></i> 下载
                     </a>
 
-                    <!-- 删除按钮 - 使用数据属性 -->
-                    <button type="button"
-                            class="btn btn-danger btn-sm ms-1"
-                            th:data-filename="${file.filename}"
-                            th:data-originalname="${file.originalFilename}"
-                            onclick="confirmDelete(this)">
+                    <!-- 删除按钮 -->
+                    <form th:action="@{/api/delete/{fileName}(fileName=${file.filename})}"
+                          method="post"
+                          style="display: inline;"
+                          onsubmit="return confirm('确定要删除文件 \'' + [[${file.originalFilename}]] + '\' 吗？此操作无法撤销！');">
+                    <button type="submit" class="btn btn-danger btn-sm ms-1">
                         <i class="fas fa-trash"></i> 删除
                     </button>
+                    </form>
                 </td>
             </tr>
             </tbody>
         </table>
     </div>
-</div>
 
-<!-- 隐藏的删除表单 -->
-<form id="deleteForm" method="post" style="display: none;">
-    <input type="hidden" name="_method" value="delete"/>
-</form>
+    <!-- API 信息 -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="fas fa-code"></i> REST API 端点</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <ul class="list-unstyled">
+                        <li><strong>上传文件:</strong> POST /api/v1/files/upload</li>
+                        <li><strong>批量上传:</strong> POST /api/v1/files/upload/batch</li>
+                        <li><strong>获取文件列表:</strong> GET /api/v1/files</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <ul class="list-unstyled">
+                        <li><strong>下载文件:</strong> GET /api/v1/files/download/{filename}</li>
+                        <li><strong>删除文件:</strong> DELETE /api/v1/files/{filename}</li>
+                        <li><strong>获取文件信息:</strong> GET /api/v1/files/{filename}/info</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <script>
     // 文件大小验证
@@ -177,29 +199,27 @@
                 this.value = '';
             }
         });
+        // 添加上传进度指示
+        const uploadForm = document.getElementById('uploadForm');
+        uploadForm.addEventListener('submit', function() {
+            const submitBtn = this.querySelector('button[type="submit"]');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 上传中...';
+        });
     });
 
-    // 删除确认函数
-    function confirmDelete(button) {
-        const filename = button.getAttribute('data-filename');
-        const originalName = button.getAttribute('data-originalname');
-
-        if (confirm('确定要删除文件 "' + originalName + '" 吗？此操作无法撤销！')) {
-            // 创建删除表单并提交
-            const form = document.getElementById('deleteForm');
-            form.action = '/delete/' + encodeURIComponent(filename);
-            form.submit();
-        }
-    }
-
-    // 工具函数：格式化文件大小显示
-    function formatFileSize(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
+    // 自动关闭警告消息
+    document.addEventListener('DOMContentLoaded', function() {
+        const alerts = document.querySelectorAll('.alert');
+        alerts.forEach(function(alert) {
+            setTimeout(function() {
+                if (alert.classList.contains('show')) {
+                    const bsAlert = new bootstrap.Alert(alert);
+                    bsAlert.close();
+                }
+            }, 5000);
+        });
+    });
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
