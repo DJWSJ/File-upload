@@ -80,10 +80,10 @@ public class FileController {
         return "file-list";
     }
 
-    @GetMapping("/category/{category}")
-    public String listFilesByCategory(@PathVariable String category, Model model) {
-        return listFiles(model, category);
-    }
+//    @GetMapping("/category/{category}")
+//    public String listFilesByCategory(@PathVariable String category, Model model) {
+//        return listFiles(model, category);
+//    }
 
     @PostMapping("/upload")
     public String uploadFile(@RequestParam("file") MultipartFile file,
@@ -470,27 +470,27 @@ public class FileController {
 
     // ==================== 原有的REST API接口（保持兼容） ====================
 
-    @GetMapping("/files/category/{category}")
-    @ResponseBody
-    public ResponseEntity<Map<String, Object>> getFilesByCategoryApi(@PathVariable String category) {
-        Map<String, Object> response = new HashMap<>();
-        try {
-            FileCategory fileCategory = FileCategory.valueOf(category.toUpperCase());
-            List<FileInfo> files = fileStorageService.getFilesByCategory(fileCategory);
-            files.forEach(file ->
-                    file.setDownloadUrl("/api/download/" + file.getFilename()));
-
-            response.put("success", true);
-            response.put("code", 200);
-            response.put("data", files);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            response.put("success", false);
-            response.put("code", 500);
-            response.put("message", "获取分类文件失败: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
-        }
-    }
+//    @GetMapping("/files/category/{category}")
+//    @ResponseBody
+//    public ResponseEntity<Map<String, Object>> getFilesByCategoryApi(@PathVariable String category) {
+//        Map<String, Object> response = new HashMap<>();
+//        try {
+//            FileCategory fileCategory = FileCategory.valueOf(category.toUpperCase());
+//            List<FileInfo> files = fileStorageService.getFilesByCategory(fileCategory);
+//            files.forEach(file ->
+//                    file.setDownloadUrl("/api/download/" + file.getFilename()));
+//
+//            response.put("success", true);
+//            response.put("code", 200);
+//            response.put("data", files);
+//            return ResponseEntity.ok(response);
+//        } catch (Exception e) {
+//            response.put("success", false);
+//            response.put("code", 500);
+//            response.put("message", "获取分类文件失败: " + e.getMessage());
+//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+//        }
+//    }
 
     @GetMapping("/categories/stats")
     @ResponseBody
