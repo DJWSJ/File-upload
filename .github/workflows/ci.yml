@@ -65,7 +65,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.project-info.outputs.version }}-${{ github.run_number }}
-          release_name: ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}
+          name: ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}  # 修正：使用name而不是release_name
           body: |
             Automated release of ${{ steps.project-info.outputs.project_name }}
             
