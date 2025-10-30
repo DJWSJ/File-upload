@@ -18,7 +18,10 @@ bin/
 !**/src/test/**/bin/
 .gradle/
 .build/
-
+gradlew
+gradlew.bat
+build
+.gitignore
 
 ### IntelliJ IDEA ###
 .idea
