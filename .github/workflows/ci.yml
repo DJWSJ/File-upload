@@ -5,8 +5,6 @@ on:
     branches: [ main, master ]
   release:
     types: [ published ]
-  pull_request:
-    types: [ closed ]
 
 env:
   JAVA_VERSION: '17'
@@ -16,11 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write  # 添加PR写入权限
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整的git历史记录
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
@@ -50,6 +49,37 @@ jobs:
         id: date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # 方法1: 如果存在CHANGELOG.md文件，读取特定版本的内容
+          if [ -f "CHANGELOG.md" ]; then
+            echo "找到 CHANGELOG.md 文件"
+            # 这里可以添加解析CHANGELOG.md的逻辑，提取当前版本的更新日志
+            CHANGELOG_CONTENT="📋 更新日志详见: CHANGELOG.md"
+          else
+            # 方法2: 自动生成基于git提交的更新日志
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$LATEST_TAG" ]; then
+              # 如果没有标签，获取所有提交
+              CHANGELOG_CONTENT=$(git log --oneline --pretty=format:"- %s" -10)
+            else
+              # 获取自从上一个标签以来的提交
+              CHANGELOG_CONTENT=$(git log --oneline --pretty=format:"- %s" ${LATEST_TAG}..HEAD)
+            fi
+          
+            if [ -z "$CHANGELOG_CONTENT" ]; then
+              CHANGELOG_CONTENT="📝 本次更新包含常规改进和bug修复"
+            fi
+          
+            echo "生成的更新日志:"
+            echo "$CHANGELOG_CONTENT"
+          fi
+          
+          # 将更新日志保存到文件
+          echo "$CHANGELOG_CONTENT" > changelog.txt
+          echo "changelog_file=changelog.txt" >> $GITHUB_OUTPUT
+
       - name: Rename JAR file
         run: |
           # 重命名JAR文件
@@ -60,12 +90,10 @@ jobs:
           ls -la target/*.jar
 
       - name: Create GitHub Release
-        # 只在push到main/master分支或发布时创建Release
-        if: github.event_name == 'push' || github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.project-info.outputs.version }}-${{ github.run_number }}
-          name: ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}  # 修正：使用name而不是release_name
+          name: ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}  # 修正参数名
           body: |
             Automated release of ${{ steps.project-info.outputs.project_name }}
             
@@ -73,55 +101,17 @@ jobs:
             - **Commit**: ${{ github.sha }}
             - **Build Date**: ${{ steps.date.outputs.date }}
             - **Run Number**: ${{ github.run_number }}
+            
+            ## 📖 更新日志
+            
+            $(cat ${{ steps.changelog.outputs.changelog_file }})
+            
+            ## 📦 构建信息
+            - **Java版本**: ${{ env.JAVA_VERSION }}
+            - **构建系统**: GitHub Actions
           draft: false
           prerelease: false
           files: |
             target/${{ steps.project-info.outputs.project_name }}-*.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Add PR Description for Merged PR
-        # 只在PR合并时执行
-        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const prNumber = context.payload.pull_request.number;
-            const version = '${{ steps.project-info.outputs.version }}';
-            const projectName = '${{ steps.project-info.outputs.project_name }}';
-            const buildDate = '${{ steps.date.outputs.date }}';
-            const runNumber = '${{ github.run_number }}';
-            const commitSha = '${{ github.sha }}';
-            
-            // 获取现有的PR描述
-            const { data: pr } = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: prNumber
-            });
-            
-            const buildInfo = `
-            ## 🏗️ 构建信息
-            | 项目 | 版本 | 构建日期 | 构建编号 | 提交哈希 |
-            |------|------|----------|----------|----------|
-            | ${projectName} | ${version} | ${buildDate} | ${runNumber} | ${commitSha.substring(0, 7)} |
-            
-            ### 📦 构建产物
-            - **JAR文件**: \`${projectName}-${version}.jar\`
-            - **构建状态**: ✅ 成功
-            - **触发事件**: PR合并
-            `;
-            
-            // 合并原有的PR描述和构建信息
-            const newBody = pr.body + '\n\n' + buildInfo;
-            
-            // 更新PR描述
-            await github.rest.pulls.update({
-              owner,
-              repo,
-              pull_number: prNumber,
-              body: newBody
-            });
-            
-            console.log('成功更新PR描述');
