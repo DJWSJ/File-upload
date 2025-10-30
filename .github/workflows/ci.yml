@@ -19,7 +19,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 获取完整的git历史记录
+          fetch-depth: 0  # 获取完整的git历史记录，用于生成changelog
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
@@ -49,36 +49,45 @@ jobs:
         id: date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-      - name: Generate changelog
-        id: changelog
+      - name: Generate changelog from commits
+        id: commit-changelog
         run: |
-          # 方法1: 如果存在CHANGELOG.md文件，读取特定版本的内容
-          if [ -f "CHANGELOG.md" ]; then
-            echo "找到 CHANGELOG.md 文件"
-            # 这里可以添加解析CHANGELOG.md的逻辑，提取当前版本的更新日志
-            CHANGELOG_CONTENT="📋 更新日志详见: CHANGELOG.md"
-          else
-            # 方法2: 自动生成基于git提交的更新日志
-            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-            if [ -z "$LATEST_TAG" ]; then
-              # 如果没有标签，获取所有提交
-              CHANGELOG_CONTENT=$(git log --oneline --pretty=format:"- %s" -10)
+          # 获取本次构建相关的提交信息
+          if [ "${{ github.event_name }}" == "push" ]; then
+            # 对于push事件，获取这次push的提交
+            if [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+              COMMITS=$(git log --oneline --pretty=format:"- %s" ${{ github.event.before }}..${{ github.event.after }} 2>/dev/null || echo "无法获取特定范围的提交")
             else
-              # 获取自从上一个标签以来的提交
-              CHANGELOG_CONTENT=$(git log --oneline --pretty=format:"- %s" ${LATEST_TAG}..HEAD)
+              # 如果是初始提交或无法获取范围，使用最近10条提交
+              COMMITS=$(git log --oneline --pretty=format:"- %s" -10)
             fi
-          
-            if [ -z "$CHANGELOG_CONTENT" ]; then
-              CHANGELOG_CONTENT="📝 本次更新包含常规改进和bug修复"
+          elif [ "${{ github.event_name }}" == "release" ]; then
+            # 对于release事件，获取上次release以来的提交
+            LATEST_RELEASE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r .tag_name 2>/dev/null || echo "")
+            if [ -n "$LATEST_RELEASE" ] && [ "$LATEST_RELEASE" != "null" ]; then
+              COMMITS=$(git log --oneline --pretty=format:"- %s" ${LATEST_RELEASE}..HEAD)
+            else
+              COMMITS=$(git log --oneline --pretty=format:"- %s" -20)
             fi
-          
-            echo "生成的更新日志:"
-            echo "$CHANGELOG_CONTENT"
+          else
+            COMMITS=$(git log --oneline --pretty=format:"- %s" -10)
           fi
           
-          # 将更新日志保存到文件
-          echo "$CHANGELOG_CONTENT" > changelog.txt
-          echo "changelog_file=changelog.txt" >> $GITHUB_OUTPUT
+          # 如果没有获取到提交或提交为空
+          if [ -z "$COMMITS" ] || [ "$COMMITS" = "无法获取特定范围的提交" ]; then
+            COMMITS="- 📝 常规改进和优化\n- 🔧 代码维护和重构"
+          fi
+          
+          # 格式化提交信息，移除重复的空行
+          FORMATTED_COMMITS=$(echo -e "$COMMITS" | sed '/^$/N;/^\n$/D')
+          
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$FORMATTED_COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo "生成的更新日志:"
+          echo "$FORMATTED_COMMITS"
 
       - name: Rename JAR file
         run: |
@@ -93,22 +102,27 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.project-info.outputs.version }}-${{ github.run_number }}
-          name: ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}  # 修正参数名
+          name: ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}
           body: |
-            Automated release of ${{ steps.project-info.outputs.project_name }}
-            
-            - **Version**: ${{ steps.project-info.outputs.version }}
-            - **Commit**: ${{ github.sha }}
-            - **Build Date**: ${{ steps.date.outputs.date }}
-            - **Run Number**: ${{ github.run_number }}
+            # 🚀 ${{ steps.project-info.outputs.project_name }} v${{ steps.project-info.outputs.version }}
             
             ## 📖 更新日志
             
-            $(cat ${{ steps.changelog.outputs.changelog_file }})
+            ${{ steps.commit-changelog.outputs.CHANGELOG }}
             
-            ## 📦 构建信息
+            ## 📊 构建信息
+            
+            | 项目 | 版本 | 构建日期 | 构建编号 | 提交哈希 |
+            |------|------|----------|----------|----------|
+            | ${{ steps.project-info.outputs.project_name }} | ${{ steps.project-info.outputs.version }} | ${{ steps.date.outputs.date }} | ${{ github.run_number }} | ${{ github.sha }} |
+            
+            ## 🔧 技术详情
             - **Java版本**: ${{ env.JAVA_VERSION }}
-            - **构建系统**: GitHub Actions
+            - **构建工具**: Maven
+            - **触发事件**: ${{ github.event_name }}
+            - **分支**: ${{ github.ref }}
+            
+            > 此版本由 GitHub Actions 自动构建和发布
           draft: false
           prerelease: false
           files: |
