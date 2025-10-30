@@ -5,6 +5,8 @@ on:
     branches: [ main, master ]
   release:
     types: [ published ]
+  pull_request:
+    types: [ closed ]
 
 env:
   JAVA_VERSION: '17'
@@ -14,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write  # 添加PR写入权限
 
     steps:
       - name: Checkout code
@@ -57,7 +60,8 @@ jobs:
           ls -la target/*.jar
 
       - name: Create GitHub Release
-        # 修改这里：移除条件限制，每次构建都发布
+        # 只在push到main/master分支或发布时创建Release
+        if: github.event_name == 'push' || github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.project-info.outputs.version }}-${{ github.run_number }}
@@ -75,3 +79,49 @@ jobs:
             target/${{ steps.project-info.outputs.project_name }}-*.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add PR Description for Merged PR
+        # 只在PR合并时执行
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+            const version = '${{ steps.project-info.outputs.version }}';
+            const projectName = '${{ steps.project-info.outputs.project_name }}';
+            const buildDate = '${{ steps.date.outputs.date }}';
+            const runNumber = '${{ github.run_number }}';
+            const commitSha = '${{ github.sha }}';
+            
+            // 获取现有的PR描述
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber
+            });
+            
+            const buildInfo = `
+            ## 🏗️ 构建信息
+            | 项目 | 版本 | 构建日期 | 构建编号 | 提交哈希 |
+            |------|------|----------|----------|----------|
+            | ${projectName} | ${version} | ${buildDate} | ${runNumber} | ${commitSha.substring(0, 7)} |
+            
+            ### 📦 构建产物
+            - **JAR文件**: \`${projectName}-${version}.jar\`
+            - **构建状态**: ✅ 成功
+            - **触发事件**: PR合并
+            `;
+            
+            // 合并原有的PR描述和构建信息
+            const newBody = pr.body + '\n\n' + buildInfo;
+            
+            // 更新PR描述
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number: prNumber,
+              body: newBody
+            });
+            
+            console.log('成功更新PR描述');
